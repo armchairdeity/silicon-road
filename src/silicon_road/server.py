@@ -8,9 +8,11 @@ Tools
 ─────
   search_inventory   — semantic search (uses Perplexity embeddings + ChromaDB)
   get_component      — direct lookup by part number (exact or prefix match)
+  add_component      — embed and store a new component directly (no xlsx required)
+  update_quantity    — delta-based or absolute quantity adjustment
+  remove_component   — permanently delete a component from the inventory
   list_categories    — show which sheets/categories are loaded
   inventory_stats    — count per category + grand total
-  add_component      — embed and store a new component directly (no xlsx required)
 
 Run with:
   PERPLEXITY_API_KEY=<key> uv run mcsr
@@ -38,7 +40,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP
 
@@ -59,8 +61,9 @@ mcp = FastMCP(
         "Silicon Road gives you semantic search over a scavenged electronics "
         "component inventory. Use search_inventory to find parts by function, "
         "description, or specs. Use get_component for direct part-number lookup. "
-        "Use add_component to add a newly identified component directly to the "
-        "inventory without touching the spreadsheet. "
+        "Use add_component to add or fully update a component. "
+        "Use update_quantity to adjust stock levels (delta or absolute). "
+        "Use remove_component to delete a component permanently. "
         "Use inventory_stats or list_categories to understand what's available."
     ),
 )
@@ -89,6 +92,27 @@ def _format_hit(hit: dict, rank: int) -> dict[str, Any]:
         "notes": m.get("notes", ""),
         "datasheet_url": m.get("datasheet_url", ""),
     }
+
+
+def _find_matching_ids_and_meta(
+    collection, part_number: str, sheet: str
+) -> list[tuple[str, dict]]:
+    """
+    Return [(doc_id, metadata), ...] for all entries matching part_number + sheet.
+    Uses exact part_number match (case-insensitive) within the given sheet.
+    """
+    where: dict = {"sheet": {"$eq": sheet}}
+    results = collection.get(where=where, include=["metadatas", "documents"])
+
+    ids = results.get("ids") or []
+    metas = results.get("metadatas") or []
+    part_lower = part_number.strip().lower()
+
+    matches = []
+    for doc_id, meta in zip(ids, metas):
+        if meta.get("part_number", "").lower() == part_lower:
+            matches.append((doc_id, meta))
+    return matches
 
 
 # ── Tools ─────────────────────────────────────────────────────────────────────
@@ -141,7 +165,6 @@ def get_component(part_number: str, sheet: str = "") -> list[dict[str, Any]]:
     if sheet:
         where["sheet"] = {"$eq": sheet}
 
-    # ChromaDB doesn't support substring match in metadata — fetch all and filter
     all_results = collection.get(where=where or None, include=["metadatas", "documents"])
 
     part_lower = part_number.lower()
@@ -185,12 +208,14 @@ def add_component(
     notes: str = "",
 ) -> dict[str, Any]:
     """
-    Add or update a single component directly in the vector database.
+    Add or fully replace a single component in the vector database.
 
     Use this when you've identified a component (e.g. from a photo) and want
     to store it immediately without touching the spreadsheet. The component is
     embedded via Perplexity and upserted into ChromaDB — if the same part
-    number already exists in the same sheet, it is updated in place.
+    number already exists in the same sheet, all fields are replaced.
+
+    To adjust quantity without replacing other fields, use update_quantity instead.
 
     Args:
         part_number:    Component part number, e.g. "LM317T", "2N3904". Required.
@@ -208,8 +233,7 @@ def add_component(
         notes:          Any additional notes about this specific component.
 
     Returns:
-        Dict with doc_id (the ChromaDB key), total inventory count after insert,
-        and a confirmation message. Raises on embed or DB errors.
+        Dict with doc_id, total inventory count after insert, and a confirmation.
     """
     if not part_number.strip():
         return {"error": "part_number is required"}
@@ -251,8 +275,154 @@ def add_component(
         "sheet": comp.sheet,
         "embedded_text": text,
         "total_in_inventory": total,
-        "message": f"✓ {comp.part_number} added to {comp.sheet} (doc_id: {comp.doc_id}). "
-                   f"Inventory now has {total} components.",
+        "message": (
+            f"✓ {comp.part_number} added to {comp.sheet} (doc_id: {comp.doc_id}). "
+            f"Inventory now has {total} components."
+        ),
+    }
+
+
+@mcp.tool()
+def update_quantity(
+    part_number: str,
+    sheet: str,
+    delta: Optional[int] = None,
+    set_to: Optional[int] = None,
+) -> dict[str, Any]:
+    """
+    Adjust the quantity of an existing component without changing any other fields.
+
+    Provide either delta (relative change) or set_to (absolute value) — not both.
+
+    Args:
+        part_number: Exact part number of the component to update. Required.
+        sheet:       Sheet/category the component lives in (e.g. "ICs"). Required.
+        delta:       Relative quantity change. Positive to add stock (+3),
+                     negative to remove stock (-1). Cannot make qty go below 0.
+        set_to:      Set quantity to this exact value (must be >= 0).
+
+    Returns:
+        Dict with part_number, old_qty, new_qty, doc_id, and a confirmation message.
+
+    Examples:
+        Found 5 more LM317s in a drawer → update_quantity("LM317T", "ICs", delta=5)
+        Used 2 capacitors → update_quantity("100nF", "Capacitors", delta=-2)
+        Manual recount → update_quantity("2N3904", "Transistors", set_to=12)
+    """
+    if delta is None and set_to is None:
+        return {"error": "Provide either delta or set_to"}
+    if delta is not None and set_to is not None:
+        return {"error": "Provide either delta or set_to, not both"}
+    if set_to is not None and set_to < 0:
+        return {"error": "set_to must be >= 0"}
+
+    collection = get_collection(DEFAULT_DB_PATH)
+    matches = _find_matching_ids_and_meta(collection, part_number, sheet)
+
+    if not matches:
+        return {"error": f"No component found: '{part_number}' in sheet '{sheet}'. "
+                         "Use add_component to create it first."}
+    if len(matches) > 1:
+        return {
+            "error": f"Ambiguous: {len(matches)} entries match '{part_number}' in '{sheet}'. "
+                     "This shouldn't happen — check for duplicate doc_ids.",
+            "matches": [m[0] for m in matches],
+        }
+
+    doc_id, meta = matches[0]
+
+    # Parse current qty
+    try:
+        old_qty = int(meta.get("qty", "0") or "0")
+    except ValueError:
+        old_qty = 0
+
+    if delta is not None:
+        new_qty = max(0, old_qty + delta)
+    else:
+        new_qty = set_to  # type: ignore[assignment]
+
+    # Rebuild Component with updated qty, re-embed, upsert
+    comp = Component(
+        sheet=meta.get("sheet", sheet),
+        part_number=meta.get("part_number", part_number),
+        manufacturer=meta.get("manufacturer", ""),
+        description=meta.get("description", ""),
+        package=meta.get("package", ""),
+        category=meta.get("category", ""),
+        supply_voltage=meta.get("supply_voltage", ""),
+        pincount=meta.get("pincount", ""),
+        datasheet_url=meta.get("datasheet_url", ""),
+        qty=str(new_qty),
+        location=meta.get("location", ""),
+        notes=meta.get("notes", ""),
+    )
+
+    text = comp.to_text()
+    embedding = embed_single(text)
+
+    upsert_components(
+        collection=collection,
+        ids=[doc_id],
+        embeddings=[embedding],
+        documents=[text],
+        metadatas=[comp.to_metadata()],
+    )
+
+    change = f"+{delta}" if (delta is not None and delta >= 0) else str(delta if delta is not None else f"→{new_qty}")
+    return {
+        "doc_id": doc_id,
+        "part_number": comp.part_number,
+        "sheet": comp.sheet,
+        "old_qty": old_qty,
+        "new_qty": new_qty,
+        "message": f"✓ {comp.part_number} qty updated {old_qty} → {new_qty} (doc_id: {doc_id}).",
+    }
+
+
+@mcp.tool()
+def remove_component(part_number: str, sheet: str) -> dict[str, Any]:
+    """
+    Permanently delete a component from the inventory.
+
+    Use this when a component is lost, destroyed, or was added by mistake.
+    This cannot be undone — the component will need to be re-added via
+    add_component if removed in error.
+
+    Args:
+        part_number: Exact part number of the component to remove. Required.
+        sheet:       Sheet/category the component lives in (e.g. "ICs"). Required.
+
+    Returns:
+        Dict with the deleted doc_id(s), remaining inventory count, and a
+        confirmation message. Returns an error if the component is not found.
+    """
+    if not part_number.strip():
+        return {"error": "part_number is required"}
+    if not sheet.strip():
+        return {"error": "sheet is required"}
+
+    collection = get_collection(DEFAULT_DB_PATH)
+    matches = _find_matching_ids_and_meta(collection, part_number, sheet)
+
+    if not matches:
+        return {
+            "error": f"No component found: '{part_number}' in sheet '{sheet}'. Nothing deleted.",
+        }
+
+    ids_to_delete = [doc_id for doc_id, _ in matches]
+    collection.delete(ids=ids_to_delete)
+
+    remaining = collection.count()
+    return {
+        "deleted_ids": ids_to_delete,
+        "part_number": part_number,
+        "sheet": sheet,
+        "remaining_in_inventory": remaining,
+        "message": (
+            f"✓ Deleted {len(ids_to_delete)} entry for '{part_number}' from '{sheet}'. "
+            f"Inventory now has {remaining} components."
+        ),
     }
 
 
