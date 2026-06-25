@@ -1,0 +1,48 @@
+[project]
+name = "silicon-road"
+version = "0.1.0"
+description = "Mad Claude: Silicon Road — RAG system over scavenged electronics inventory"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # chromadb 0.6+ pulls onnxruntime 1.27 which has no Intel Mac wheel.
+    # We supply our own embeddings (Perplexity), so we only need chromadb's
+    # vector store — pin to a range with Intel-compatible onnxruntime.
+    "chromadb>=0.4.14,<0.6",
+    "httpx>=0.27",
+    "mcp>=1.0",
+    "openpyxl>=3.1",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+mcsr = "silicon_road.server:main"
+mcsr-ingest = "silicon_road.ingest.pipeline:main"
+mcsr-query = "silicon_road.query:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/silicon_road"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.uv]
+# onnxruntime 1.20+ dropped the Intel Mac (x86_64) wheel.
+# Force the resolver to an older version that ships a macosx x86_64 wheel.
+override-dependencies = ["onnxruntime>=1.16,<1.20"]
