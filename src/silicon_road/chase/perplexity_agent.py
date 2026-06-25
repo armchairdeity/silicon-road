@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -24,6 +25,9 @@ SONAR_URL = "https://api.perplexity.ai/chat/completions"
 SONAR_MODEL = "sonar"
 MAX_RETRIES = 3
 RETRY_DELAY = 3.0
+
+# All section headers — used as lookahead terminators in every section regex
+_SECTION_HEADERS = r"(?=DATASHEET_URL|TECHNICAL_SUMMARY|KEY_SPECS|APPLICATIONS|\Z)"
 
 
 @dataclass
@@ -68,20 +72,50 @@ def _build_prompt(part_number: str, manufacturer: str, category: str,
 
     lines += [
         "",
-        "Please provide:",
-        "1. DATASHEET_URL: A direct URL to the official datasheet PDF (from the manufacturer "
-        "website or a reputable datasheet site like alldatasheet.com, datasheetarchive.com, "
-        "or mouser.com). Must be a real, working URL.",
-        "2. TECHNICAL_SUMMARY: A concise 2-3 sentence technical description of what this "
-        "component does and its key characteristics.",
-        "3. KEY_SPECS: List up to 5 key electrical specifications (voltage, current, frequency, "
-        "gain, etc.) in the format 'Parameter: Value'.",
-        "4. APPLICATIONS: List up to 4 typical applications for this component.",
+        "Please provide exactly these four sections in this order, using these exact headers:",
         "",
-        "Format your response with these exact section headers.",
-        "If you cannot find reliable information about this specific part number, say so clearly.",
+        "DATASHEET_URL: <direct URL to the official datasheet PDF, or 'Not found'>",
+        "",
+        "TECHNICAL_SUMMARY: <2-3 sentence technical description of what this component "
+        "does and its key characteristics>",
+        "",
+        "KEY_SPECS:",
+        "- Parameter: Value",
+        "(list up to 5 key electrical specifications)",
+        "",
+        "APPLICATIONS:",
+        "- Application description",
+        "(list up to 4 typical real-world applications)",
+        "",
+        "If you cannot find reliable information about this specific part number, "
+        "say so under TECHNICAL_SUMMARY and leave other sections empty.",
     ]
     return "\n".join(lines)
+
+
+def _clean_list_line(line: str) -> str:
+    """Strip bullet/number prefixes from a list line."""
+    return re.sub(r"^[\s•\-\*\d\.]+", "", line).strip()
+
+
+def _is_section_header(line: str) -> bool:
+    """Return True if a line looks like one of our section headers."""
+    return bool(re.match(
+        r"^(DATASHEET_URL|TECHNICAL_SUMMARY|KEY_SPECS|APPLICATIONS)\s*[:\s]",
+        line.strip(),
+        re.IGNORECASE,
+    ))
+
+
+def _is_spec_line(line: str) -> bool:
+    """Heuristic: a line that looks like 'Label: Value' is probably a spec, not an app."""
+    cleaned = _clean_list_line(line)
+    # Specs tend to have short keys before a colon: "Vout: 5V", "Current: 1.5A"
+    if ":" in cleaned:
+        key, _, _ = cleaned.partition(":")
+        if len(key.strip()) < 35 and key.strip():
+            return True
+    return False
 
 
 def _parse_response(text: str) -> dict:
@@ -89,10 +123,11 @@ def _parse_response(text: str) -> dict:
     Parse the Sonar response into structured fields.
 
     Looks for section headers in the response text and extracts content.
+    All section regexes use a shared lookahead (all headers + end-of-string)
+    so sections can appear in any order without bleed-through.
+
     Returns a dict with keys: datasheet_url, technical_summary, key_specs, applications.
     """
-    import re
-
     result: dict = {
         "datasheet_url": None,
         "technical_summary": None,
@@ -100,62 +135,62 @@ def _parse_response(text: str) -> dict:
         "applications": [],
     }
 
-    # Extract DATASHEET_URL
+    # ── DATASHEET_URL ─────────────────────────────────────────────────────────
     url_match = re.search(
         r"DATASHEET_URL[:\s]+([^\s\n]+)",
         text,
         re.IGNORECASE,
     )
     if url_match:
-        url = url_match.group(1).strip().rstrip(".,")
-        if url.startswith("http"):
+        url = url_match.group(1).strip().rstrip(".,)")
+        if url.lower().startswith("http"):
             result["datasheet_url"] = url
 
-    # If no explicit header, look for any PDF link
+    # Fallback: any PDF link in the text
     if not result["datasheet_url"]:
         pdf_match = re.search(r"(https?://[^\s\"'<>]+\.pdf[^\s\"'<>]*)", text, re.IGNORECASE)
         if pdf_match:
             result["datasheet_url"] = pdf_match.group(1)
 
-    # Extract TECHNICAL_SUMMARY
+    # ── TECHNICAL_SUMMARY ─────────────────────────────────────────────────────
     summary_match = re.search(
-        r"TECHNICAL_SUMMARY[:\s]+(.*?)(?=KEY_SPECS|APPLICATIONS|$)",
+        r"TECHNICAL_SUMMARY[:\s]+(.*?)" + _SECTION_HEADERS,
         text,
         re.IGNORECASE | re.DOTALL,
     )
     if summary_match:
-        summary = summary_match.group(1).strip()
-        # Clean up numbered prefixes if present
-        summary = re.sub(r"^\d+\.\s*", "", summary)
-        result["technical_summary"] = summary[:800] if summary else None
+        summary = re.sub(r"^\d+\.\s*", "", summary_match.group(1).strip())
+        # Exclude "Not found" / "Unable to find" responses
+        if summary and not re.search(r"not found|unable to find|no reliable", summary, re.IGNORECASE):
+            result["technical_summary"] = summary[:800]
 
-    # Extract KEY_SPECS as list
+    # ── KEY_SPECS ─────────────────────────────────────────────────────────────
     specs_match = re.search(
-        r"KEY_SPECS[:\s]+(.*?)(?=APPLICATIONS|$)",
+        r"KEY_SPECS[:\s]+(.*?)" + _SECTION_HEADERS,
         text,
         re.IGNORECASE | re.DOTALL,
     )
     if specs_match:
-        specs_block = specs_match.group(1).strip()
         specs = [
-            line.lstrip("•-*123456789. ").strip()
-            for line in specs_block.splitlines()
-            if line.strip() and not line.strip().startswith("APPLICATIONS")
+            _clean_list_line(line)
+            for line in specs_match.group(1).splitlines()
+            if line.strip() and not _is_section_header(line)
         ]
         result["key_specs"] = [s for s in specs if s][:5]
 
-    # Extract APPLICATIONS as list
+    # ── APPLICATIONS ──────────────────────────────────────────────────────────
     apps_match = re.search(
-        r"APPLICATIONS[:\s]+(.*?)$",
+        r"APPLICATIONS[:\s]+(.*?)" + _SECTION_HEADERS,
         text,
         re.IGNORECASE | re.DOTALL,
     )
     if apps_match:
-        apps_block = apps_match.group(1).strip()
         apps = [
-            line.lstrip("•-*123456789. ").strip()
-            for line in apps_block.splitlines()
+            _clean_list_line(line)
+            for line in apps_match.group(1).splitlines()
             if line.strip()
+            and not _is_section_header(line)
+            and not _is_spec_line(line)  # don't accidentally grab spec entries
         ]
         result["applications"] = [a for a in apps if a][:4]
 
@@ -205,7 +240,7 @@ def research_component(
                 "content": (
                     "You are a technical electronics expert specializing in locating datasheets "
                     "and specifications for electronic components. Be precise and factual. "
-                    "Always include the exact section headers requested."
+                    "Always use the exact section headers requested, in the order given."
                 ),
             },
             {"role": "user", "content": prompt},
