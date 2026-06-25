@@ -26,6 +26,7 @@ dev = [
 mcsr = "silicon_road.server:main"
 mcsr-ingest = "silicon_road.ingest.pipeline:main"
 mcsr-query = "silicon_road.query:main"
+mcsr-chase = "silicon_road.chase.pipeline:main"
 
 [build-system]
 requires = ["hatchling"]
