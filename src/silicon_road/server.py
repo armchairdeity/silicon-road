@@ -10,6 +10,7 @@ Tools
   get_component      — direct lookup by part number (exact or prefix match)
   list_categories    — show which sheets/categories are loaded
   inventory_stats    — count per category + grand total
+  add_component      — embed and store a new component directly (no xlsx required)
 
 Run with:
   PERPLEXITY_API_KEY=<key> uv run mcsr
@@ -42,7 +43,8 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from silicon_road.embed.perplexity import embed_single
-from silicon_road.store.chroma import get_collection, query_inventory
+from silicon_road.ingest.spreadsheet import Component
+from silicon_road.store.chroma import get_collection, query_inventory, upsert_components
 
 # ── Silence chromadb telemetry spam ──────────────────────────────────────────
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
@@ -57,6 +59,8 @@ mcp = FastMCP(
         "Silicon Road gives you semantic search over a scavenged electronics "
         "component inventory. Use search_inventory to find parts by function, "
         "description, or specs. Use get_component for direct part-number lookup. "
+        "Use add_component to add a newly identified component directly to the "
+        "inventory without touching the spreadsheet. "
         "Use inventory_stats or list_categories to understand what's available."
     ),
 )
@@ -163,6 +167,93 @@ def get_component(part_number: str, sheet: str = "") -> list[dict[str, Any]]:
     if not matches:
         return [{"message": f"No component found matching '{part_number}'"}]
     return matches
+
+
+@mcp.tool()
+def add_component(
+    part_number: str,
+    sheet: str,
+    description: str = "",
+    manufacturer: str = "",
+    package: str = "",
+    category: str = "",
+    supply_voltage: str = "",
+    pincount: str = "",
+    datasheet_url: str = "",
+    qty: str = "",
+    location: str = "",
+    notes: str = "",
+) -> dict[str, Any]:
+    """
+    Add or update a single component directly in the vector database.
+
+    Use this when you've identified a component (e.g. from a photo) and want
+    to store it immediately without touching the spreadsheet. The component is
+    embedded via Perplexity and upserted into ChromaDB — if the same part
+    number already exists in the same sheet, it is updated in place.
+
+    Args:
+        part_number:    Component part number, e.g. "LM317T", "2N3904". Required.
+        sheet:          Inventory category. Use one of: ICs, Transistors, Diodes,
+                        MOSFETs, Resistors, Capacitors, Inductors, Misc. Required.
+        description:    Human-readable description of what the component does.
+        manufacturer:   Manufacturer name, e.g. "Texas Instruments", "ON Semi".
+        package:        Physical package, e.g. "TO-92", "DIP-8", "SOT-23".
+        category:       Function/category label, e.g. "Voltage Regulator", "NPN BJT".
+        supply_voltage: Operating voltage range, e.g. "3.3-40".
+        pincount:       Number of pins as a string, e.g. "3", "8".
+        datasheet_url:  URL to the datasheet PDF (optional but encouraged).
+        qty:            Quantity on hand as a string, e.g. "12".
+        location:       Bin or drawer label, e.g. "A3", "IC Drawer 2".
+        notes:          Any additional notes about this specific component.
+
+    Returns:
+        Dict with doc_id (the ChromaDB key), total inventory count after insert,
+        and a confirmation message. Raises on embed or DB errors.
+    """
+    if not part_number.strip():
+        return {"error": "part_number is required"}
+    if not sheet.strip():
+        return {"error": "sheet is required (ICs, Transistors, Diodes, MOSFETs, "
+                         "Resistors, Capacitors, Inductors, Misc)"}
+
+    comp = Component(
+        sheet=sheet.strip(),
+        part_number=part_number.strip(),
+        manufacturer=manufacturer.strip(),
+        description=description.strip(),
+        package=package.strip(),
+        category=category.strip(),
+        supply_voltage=supply_voltage.strip(),
+        pincount=pincount.strip(),
+        datasheet_url=datasheet_url.strip(),
+        qty=qty.strip(),
+        location=location.strip(),
+        notes=notes.strip(),
+    )
+
+    text = comp.to_text()
+    embedding = embed_single(text)
+
+    collection = get_collection(DEFAULT_DB_PATH)
+    upsert_components(
+        collection=collection,
+        ids=[comp.doc_id],
+        embeddings=[embedding],
+        documents=[text],
+        metadatas=[comp.to_metadata()],
+    )
+
+    total = collection.count()
+    return {
+        "doc_id": comp.doc_id,
+        "part_number": comp.part_number,
+        "sheet": comp.sheet,
+        "embedded_text": text,
+        "total_in_inventory": total,
+        "message": f"✓ {comp.part_number} added to {comp.sheet} (doc_id: {comp.doc_id}). "
+                   f"Inventory now has {total} components.",
+    }
 
 
 @mcp.tool()
