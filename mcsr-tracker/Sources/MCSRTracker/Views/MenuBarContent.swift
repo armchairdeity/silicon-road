@@ -51,6 +51,13 @@ struct MenuBarContent: View {
 
             Button("Refresh")             { store.load() }.keyboardShortcut("r")
                 .padding(.horizontal, 12).padding(.vertical, 4)
+
+            Toggle("Start at Login", isOn: Binding(
+                get: { LoginItemManager.isEnabled() },
+                set: { on in on ? LoginItemManager.enable() : LoginItemManager.disable() }
+            ))
+            .padding(.horizontal, 12).padding(.vertical, 4)
+
             Button("Quit MCSR Tracker")   { NSApp.terminate(nil) }.keyboardShortcut("q")
                 .padding(.horizontal, 12).padding(.vertical, 4)
         }

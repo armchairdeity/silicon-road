@@ -2,18 +2,18 @@ import Foundation
 
 // MARK: - Enums
 
-enum CurationStatus: String {
+public enum CurationStatus: String {
     case accepted, rejected, pending
 }
 
-enum AssetType: String, CaseIterable, Identifiable {
+public enum AssetType: String, CaseIterable, Identifiable {
     case pdf     = "PDF"
     case webpage = "Web Page"
     case unknown = "Unknown"
-    var id: String { rawValue }
+    public var id: String { rawValue }
 }
 
-enum SidebarFilter: String, CaseIterable, Identifiable {
+public enum SidebarFilter: String, CaseIterable, Identifiable {
     case all        = "All"
     case pending    = "Pending"
     case curated    = "Curated"
@@ -21,19 +21,19 @@ enum SidebarFilter: String, CaseIterable, Identifiable {
     case notVectored = "Accepted / Not Vectored"
     case pdf        = "PDF"
     case webpage    = "Web Page"
-    var id: String { rawValue }
+    public var id: String { rawValue }
 }
 
 // MARK: - URL Validation
 
-struct UrlValidation: Codable {
-    var url: String?
-    var reachable: Bool?
-    var statusCode: Int?
-    var contentType: String?
-    var finalUrl: String?
-    var isPdf: Bool?
-    var error: String?
+public struct UrlValidation: Codable {
+    public var url: String?
+    public var reachable: Bool?
+    public var statusCode: Int?
+    public var contentType: String?
+    public var finalUrl: String?
+    public var isPdf: Bool?
+    public var error: String?
 
     enum CodingKeys: String, CodingKey {
         case url, reachable, error
@@ -46,24 +46,24 @@ struct UrlValidation: Codable {
 
 // MARK: - Main Model
 
-struct SidecarEntry: Codable, Identifiable, Hashable {
-    var id: String
-    var partNumber: String?
-    var manufacturer: String?
-    var datasheetUrl: String?
-    var datasheetUrlValid: Bool?
-    var datasheetContentType: String?
-    var technicalSummary: String?
-    var keySpecs: [String]?
-    var applications: [String]?
-    var rawResponse: String?
-    var error: String?
-    var skipped: Bool?
-    var skipReason: String?
-    var urlValidation: UrlValidation?
-    var curated: String?        // "accepted", "rejected", or nil
-    var rejectedAt: Date?
-    var vectoredAt: Date?
+public struct SidecarEntry: Codable, Identifiable, Hashable {
+    public var id: String
+    public var partNumber: String?
+    public var manufacturer: String?
+    public var datasheetUrl: String?
+    public var datasheetUrlValid: Bool?
+    public var datasheetContentType: String?
+    public var technicalSummary: String?
+    public var keySpecs: [String]?
+    public var applications: [String]?
+    public var rawResponse: String?
+    public var error: String?
+    public var skipped: Bool?
+    public var skipReason: String?
+    public var urlValidation: UrlValidation?
+    public var curated: String?        // "accepted", "rejected", or nil
+    public var rejectedAt: Date?
+    public var vectoredAt: Date?
 
     enum CodingKeys: String, CodingKey {
         case id                   = "doc_id"
@@ -86,12 +86,12 @@ struct SidecarEntry: Codable, Identifiable, Hashable {
 
     // MARK: - Computed Properties
 
-    var curationStatus: CurationStatus {
+    public var curationStatus: CurationStatus {
         guard let c = curated else { return .pending }
         return CurationStatus(rawValue: c) ?? .pending
     }
 
-    var assetType: AssetType {
+    public var assetType: AssetType {
         let ct = datasheetContentType ?? urlValidation?.contentType ?? ""
         if ct.contains("pdf") { return .pdf }
         if ct.contains("html") || ct.contains("text/") { return .webpage }
@@ -101,13 +101,13 @@ struct SidecarEntry: Codable, Identifiable, Hashable {
         return .webpage
     }
 
-    var effectiveUrl: String? { urlValidation?.finalUrl ?? datasheetUrl }
+    public var effectiveUrl: String? { urlValidation?.finalUrl ?? datasheetUrl }
 
-    var isPendingVectorization: Bool {
+    public var isPendingVectorization: Bool {
         curationStatus == .accepted && vectoredAt == nil
     }
 
-    func matches(filter: SidebarFilter) -> Bool {
+    public func matches(filter: SidebarFilter) -> Bool {
         switch filter {
         case .all:        return true
         case .pending:    return curationStatus == .pending
@@ -119,6 +119,6 @@ struct SidecarEntry: Codable, Identifiable, Hashable {
         }
     }
 
-    static func == (lhs: SidecarEntry, rhs: SidecarEntry) -> Bool { lhs.id == rhs.id }
-    func hash(into hasher: inout Hasher) { hasher.combine(id) }
+    public static func == (lhs: SidecarEntry, rhs: SidecarEntry) -> Bool { lhs.id == rhs.id }
+    public func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }

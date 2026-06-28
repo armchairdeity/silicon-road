@@ -6,6 +6,10 @@ struct MCSRTrackerApp: App {
     @StateObject private var store = SidecarStore()
     @StateObject private var cache = AssetCache(cacheDir: SidecarStore.cacheDir)
 
+    init() {
+        LoginItemManager.promptIfNeeded()
+    }
+
     var body: some Scene {
         MenuBarExtra {
             MenuBarContent()

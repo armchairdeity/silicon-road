@@ -1,8 +1,8 @@
 import Foundation
 
-enum DomainTrust {
+public enum DomainTrust {
 
-    static let trusted: Set<String> = [
+    public static let trusted: Set<String> = [
         // Distributors
         "mouser.com", "digikey.com", "digi-key.com", "arrow.com",
         "avnet.com", "newark.com", "jameco.com", "adafruit.com",
@@ -20,10 +20,10 @@ enum DomainTrust {
         "octopart.com", "findchips.com",
     ]
 
-    enum Status {
+    public enum Status {
         case trusted, unverified, noURL
 
-        var label: String {
+        public var label: String {
             switch self {
             case .trusted:    return "✓ Trusted source"
             case .unverified: return "⚠ Unverified domain"
@@ -32,7 +32,7 @@ enum DomainTrust {
         }
     }
 
-    static func check(urlString: String?) -> Status {
+    public static func check(urlString: String?) -> Status {
         guard let str = urlString, !str.isEmpty,
               let host = URL(string: str)?.host?.lowercased() else { return .noURL }
         let parts = host.split(separator: ".")

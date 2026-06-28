@@ -41,7 +41,7 @@ struct PreviewView: View {
                 placeholder("No asset URL", icon: "doc.questionmark")
             }
         }
-        .onAppear          { cache.fetch(entry) }
+        .onAppear { cache.fetch(entry) }
         .onChange(of: entry.id) { _ in cache.fetch(entry) }
     }
 
