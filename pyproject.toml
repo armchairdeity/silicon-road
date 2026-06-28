@@ -13,6 +13,7 @@ dependencies = [
     "mcp>=1.0",
     "openpyxl>=3.1",
     "rich>=13.0",
+    "uvicorn>=0.29",
 ]
 
 [project.optional-dependencies]
@@ -23,10 +24,11 @@ dev = [
 ]
 
 [project.scripts]
-mcsr = "silicon_road.server:main"
+mcsr        = "silicon_road.server:main"
+mcsr-sse    = "silicon_road.server:main_sse"
 mcsr-ingest = "silicon_road.ingest.pipeline:main"
-mcsr-query = "silicon_road.query:main"
-mcsr-chase = "silicon_road.chase.pipeline:main"
+mcsr-query  = "silicon_road.query:main"
+mcsr-chase  = "silicon_road.chase.pipeline:main"
 mcsr-curate = "silicon_road.curate.pipeline:main"
 
 [build-system]

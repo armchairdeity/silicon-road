@@ -15,11 +15,10 @@ Tools
   inventory_stats    — count per category + grand total
 
 Run with:
-  PERPLEXITY_API_KEY=<key> uv run mcsr
-  # or
-  PERPLEXITY_API_KEY=<key> uv run python -m silicon_road.server
+  PERPLEXITY_API_KEY=<key> uv run mcsr          # stdio (Claude Desktop spawns it)
+  PERPLEXITY_API_KEY=<key> uv run mcsr-sse      # SSE on 127.0.0.1:8765 (launchd)
 
-Register in Claude Desktop claude_desktop_config.json:
+Register in Claude Desktop claude_desktop_config.json (stdio):
   {
     "mcpServers": {
       "silicon-road": {
@@ -30,6 +29,15 @@ Register in Claude Desktop claude_desktop_config.json:
           "PERPLEXITY_API_KEY": "<key>",
           "ANONYMIZED_TELEMETRY": "False"
         }
+      }
+    }
+  }
+
+Register in Claude Desktop claude_desktop_config.json (SSE / launchd):
+  {
+    "mcpServers": {
+      "silicon-road": {
+        "url": "http://127.0.0.1:8765/sse"
       }
     }
   }
@@ -479,10 +487,24 @@ def inventory_stats() -> dict[str, Any]:
     }
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+# ── Entry points ──────────────────────────────────────────────────────────────
 
 def main() -> None:
+    """stdio transport — Claude Desktop spawns this as a child process."""
     mcp.run()
+
+
+def main_sse() -> None:
+    """SSE/HTTP transport — run as a launchd-managed daemon on localhost:8765.
+
+    Claude Desktop connects via URL instead of spawning a subprocess, so
+    launchd can restart the server if it crashes without any user intervention.
+    """
+    port = int(os.environ.get("MCSR_SSE_PORT", "8765"))
+    mcp.settings.host = "127.0.0.1"
+    mcp.settings.port = port
+    logger.info("Starting Silicon Road MCP server (SSE) on 127.0.0.1:%d", port)
+    mcp.run(transport="sse")
 
 
 if __name__ == "__main__":
