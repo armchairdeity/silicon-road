@@ -1,4 +1,5 @@
 import SwiftUI
+import MCSRTrackerCore
 
 struct SidebarView: View {
     let entries:    [SidecarEntry]

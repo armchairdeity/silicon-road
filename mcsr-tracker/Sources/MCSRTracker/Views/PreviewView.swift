@@ -1,6 +1,7 @@
 import SwiftUI
 import QuickLookUI
 import AppKit
+import MCSRTrackerCore
 
 struct PreviewView: View {
     let entry: SidecarEntry

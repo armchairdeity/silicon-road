@@ -1,4 +1,5 @@
 import SwiftUI
+import MCSRTrackerCore
 
 @main
 struct MCSRTrackerApp: App {

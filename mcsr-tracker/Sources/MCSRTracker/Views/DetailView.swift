@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import MCSRTrackerCore
 
 struct DetailView: View {
     let entry: SidecarEntry

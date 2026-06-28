@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import WebKit
+import MCSRTrackerCore
 
 @MainActor
 final class AssetCache: ObservableObject {

@@ -1,4 +1,5 @@
 import SwiftUI
+import MCSRTrackerCore
 
 struct CurationPanelView: View {
     @EnvironmentObject var store: SidecarStore

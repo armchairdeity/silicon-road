@@ -1,4 +1,5 @@
 import SwiftUI
+import MCSRTrackerCore
 
 struct MenuBarContent: View {
     @EnvironmentObject var store: SidecarStore

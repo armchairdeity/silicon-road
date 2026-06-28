@@ -1,4 +1,5 @@
 import SwiftUI
+import MCSRTrackerCore
 
 struct ThumbnailItemView: View {
     let entry:      SidecarEntry
