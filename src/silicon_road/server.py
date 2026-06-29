@@ -54,7 +54,12 @@ from mcp.server.fastmcp import FastMCP
 
 from silicon_road.embed.perplexity import embed_single
 from silicon_road.ingest.spreadsheet import Component
-from silicon_road.store.chroma import get_collection, query_inventory, upsert_components
+from silicon_road.store.chroma import (
+    delete_components,
+    get_collection,
+    query_inventory,
+    upsert_components,
+)
 
 # ── Silence chromadb telemetry spam ──────────────────────────────────────────
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
@@ -419,7 +424,7 @@ def remove_component(part_number: str, sheet: str) -> dict[str, Any]:
         }
 
     ids_to_delete = [doc_id for doc_id, _ in matches]
-    collection.delete(ids=ids_to_delete)
+    delete_components(collection, ids_to_delete)
 
     remaining = collection.count()
     return {
